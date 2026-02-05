@@ -31,6 +31,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, field_validator
 import uvicorn
 
@@ -679,6 +680,15 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content=exc.detail if isinstance(exc.detail, dict) else {"status": "error", "message": str(exc.detail)}
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation error: {str(exc)}")
+    return JSONResponse(
+        status_code=400,
+        content={"status": "error", "message": "Invalid request format"}
     )
 
 

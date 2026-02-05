@@ -31,7 +31,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 import uvicorn
 
 # ============================================
@@ -100,19 +100,22 @@ class VoiceDetectionRequest(BaseModel):
     audioFormat: str = Field(..., description="mp3")
     audioBase64: str = Field(..., description="Base64 encoded audio")
     
-    @validator('language')
+    @field_validator('language')
+    @classmethod
     def validate_language(cls, v):
         if v not in SUPPORTED_LANGUAGES:
             raise ValueError(f"Language must be one of: {', '.join(SUPPORTED_LANGUAGES)}")
         return v
     
-    @validator('audioFormat')
+    @field_validator('audioFormat')
+    @classmethod
     def validate_format(cls, v):
         if v.lower() != "mp3":
             raise ValueError("Only mp3 format is supported")
         return v.lower()
     
-    @validator('audioBase64')
+    @field_validator('audioBase64')
+    @classmethod
     def validate_base64_size(cls, v):
         # Check approximate decoded size (base64 is ~4/3 of original)
         approx_size = len(v) * 3 / 4
@@ -882,7 +885,7 @@ async def end_session(session_id: str, api_key: str = Depends(validate_api_key))
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run(
-        "guvi_submission:app",
+        "main:app",
         host="0.0.0.0",
         port=port,
         workers=4,

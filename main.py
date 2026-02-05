@@ -783,6 +783,12 @@ async def voice_detection(
 # HONEYPOT ENDPOINT
 # ============================================
 
+@app.get("/api/v1/scam-detection/")
+async def honeypot_health_check(api_key: str = Depends(validate_api_key)):
+    """GET endpoint for GUVI tester validation."""
+    return {"status": "success", "reply": "Honeypot service active"}
+
+
 @app.post("/api/v1/scam-detection/", response_model=HoneypotResponse)
 async def process_scam_message(
     request: HoneypotRequest,

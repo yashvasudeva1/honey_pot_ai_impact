@@ -1,0 +1,32 @@
+# ============================================
+# ScamShield AI - GUVI Hackathon Dependencies
+# ============================================
+# Core Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# Data Validation
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# HTTP Client
+httpx>=0.26.0
+
+# Audio Processing
+pydub>=0.25.1
+
+# ML/Audio Analysis (optional but recommended)
+numpy>=1.24.0
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# OpenAI (for Whisper transcription)
+openai>=1.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+python-dateutil>=2.8.0
+
+# Production
+gunicorn>=21.0.0

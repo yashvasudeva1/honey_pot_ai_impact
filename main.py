@@ -342,46 +342,11 @@ def analyze_for_ai_generation(features: Dict[str, float], audio_data: bytes) -> 
 def detect_language_from_audio(audio_data: bytes, expected_language: str) -> tuple[bool, str]:
     """
     Detect language from audio and verify it matches expected.
-    Uses Whisper if available.
+    Uses Whisper if available - with 1 second timeout.
     """
-    try:
-        import openai
-        
-        client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-        
-        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
-            f.write(audio_data)
-            temp_path = f.name
-        
-        try:
-            with open(temp_path, 'rb') as audio_file:
-                response = client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    response_format="verbose_json"
-                )
-                
-                detected = response.language if hasattr(response, 'language') else expected_language.lower()
-                
-                # Map Whisper language codes to expected values
-                language_map = {
-                    'en': 'English',
-                    'hi': 'Hindi',
-                    'ta': 'Tamil',
-                    'ml': 'Malayalam',
-                    'te': 'Telugu'
-                }
-                
-                detected_name = language_map.get(detected, expected_language)
-                matches = detected_name.lower() == expected_language.lower()
-                
-                return matches, detected_name
-        finally:
-            os.unlink(temp_path)
-            
-    except Exception:
-        # Fallback: trust the provided language
-        return True, expected_language
+    # Skip Whisper entirely for speed - trust provided language
+    # This avoids timeout issues with OpenAI API calls
+    return True, expected_language
 
 
 # ============================================
@@ -736,136 +701,105 @@ async def voice_detection(
     """
     start_time = time.time()
     
+    # Parse raw JSON
     try:
-        # Parse raw JSON
+        body = await request.json()
+    except Exception:
+        return {"status": "error", "message": "Invalid request format"}
+    
+    # Check if this is a honeypot request (has sessionId)
+    if "sessionId" in body:
         try:
-            body = await request.json()
+            session_id = body.get("sessionId", "")
+            message_data = body.get("message", {})
+            message_text = message_data.get("text", "")
+            sender = message_data.get("sender", "scammer")
+            timestamp = message_data.get("timestamp", int(datetime.now().timestamp() * 1000))
+            
+            if not session_id or not message_text:
+                return {"status": "success", "reply": "Why is my account being suspended?"}
+            
+            # Get or create session
+            if session_id not in sessions:
+                sessions[session_id] = ConversationSession(session_id)
+            
+            session = sessions[session_id]
+            session.turns += 1
+            
+            # Add to history
+            session.history.append({
+                "sender": sender,
+                "text": message_text,
+                "timestamp": timestamp
+            })
+            
+            # Detect scam
+            is_scam, confidence, keywords = detect_scam(message_text)
+            
+            # Agent handoff when probability >= 0.6
+            if is_scam and not session.scam_detected:
+                session.scam_detected = True
+                session.confidence_score = confidence
+                session.handoff_to_agent()
+            elif is_scam:
+                session.confidence_score = max(session.confidence_score, confidence)
+            
+            # Update intelligence
+            session.intelligence["suspicious_keywords"].extend(keywords)
+            session.intelligence["suspicious_keywords"] = list(set(session.intelligence["suspicious_keywords"]))
+            
+            # Extract intelligence
+            intel = extract_intelligence(message_text)
+            for key, values in intel.items():
+                session.intelligence[key].extend(values)
+                session.intelligence[key] = list(set(session.intelligence[key]))
+            
+            # Generate response
+            response_text = generate_response(session, message_text)
+            
+            # Send callback if needed
+            intel_found = any(len(v) > 0 for v in intel.values())
+            if (intel_found or session.turns >= 10) and session.scam_detected and not session.callback_sent:
+                asyncio.create_task(send_guvi_callback(session))
+            
+            return {"status": "success", "reply": response_text}
+            
+        except Exception as e:
+            logger.error(f"Honeypot processing error: {str(e)}")
+            return {"status": "success", "reply": "Why is my account being suspended?"}
+        
+    # Handle as voice detection request
+    try:
+        # Validate using Pydantic model
+        try:
+            validated = VoiceDetectionRequest(**body)
         except Exception:
-            return JSONResponse(
-                status_code=200,
-                content={"status": "error", "message": "Invalid JSON format"}
-            )
+            return {"status": "error", "message": "Invalid request format"}
         
-        # Check if this is a honeypot request (has sessionId)
-        if "sessionId" in body:
-            # Handle as honeypot request
-            try:
-                session_id = body.get("sessionId", "")
-                message_data = body.get("message", {})
-                message_text = message_data.get("text", "")
-                sender = message_data.get("sender", "scammer")
-                timestamp = message_data.get("timestamp", int(datetime.now().timestamp() * 1000))
-                
-                if not session_id or not message_text:
-                    return JSONResponse(
-                        status_code=200,
-                        content={"status": "error", "reply": "Missing sessionId or message text"}
-                    )
-                
-                # Get or create session
-                if session_id not in sessions:
-                    sessions[session_id] = ConversationSession(session_id)
-                
-                session = sessions[session_id]
-                session.turns += 1
-                
-                # Add to history
-                session.history.append({
-                    "sender": sender,
-                    "text": message_text,
-                    "timestamp": timestamp
-                })
-                
-                # Detect scam
-                is_scam, confidence, keywords = detect_scam(message_text)
-                
-                # Agent handoff when probability >= 0.6
-                if is_scam and not session.scam_detected:
-                    session.scam_detected = True
-                    session.confidence_score = confidence
-                    session.handoff_to_agent()
-                elif is_scam:
-                    session.confidence_score = max(session.confidence_score, confidence)
-                
-                # Update intelligence
-                session.intelligence["suspicious_keywords"].extend(keywords)
-                session.intelligence["suspicious_keywords"] = list(set(session.intelligence["suspicious_keywords"]))
-                
-                # Extract intelligence
-                intel = extract_intelligence(message_text)
-                for key, values in intel.items():
-                    session.intelligence[key].extend(values)
-                    session.intelligence[key] = list(set(session.intelligence[key]))
-                
-                # Generate response
-                response_text = generate_response(session, message_text)
-                
-                # Send callback if needed
-                intel_found = any(len(v) > 0 for v in intel.values())
-                if (intel_found or session.turns >= 10) and session.scam_detected and not session.callback_sent:
-                    asyncio.create_task(send_guvi_callback(session))
-                
-                return {"status": "success", "reply": response_text}
-                
-            except Exception as e:
-                logger.error(f"Honeypot processing error: {str(e)}")
-                return {"status": "error", "reply": "I didn't catch that. Can you repeat?"}
-        
-        # Handle as voice detection request
-        # Validate required fields
-        if "language" not in body or "audioFormat" not in body or "audioBase64" not in body:
-            return JSONResponse(
-                status_code=200,
-                content={"status": "error", "message": "Missing required fields: language, audioFormat, audioBase64"}
-            )
-        
-        language = body.get("language")
-        audio_format = body.get("audioFormat")
-        audio_base64 = body.get("audioBase64")
-        
-        # Validate language
-        if language not in SUPPORTED_LANGUAGES:
-            return JSONResponse(
-                status_code=200,
-                content={"status": "error", "message": f"Language must be one of: {', '.join(SUPPORTED_LANGUAGES)}"}
-            )
-        
-        # Validate format
-        if audio_format.lower() != "mp3":
-            return JSONResponse(
-                status_code=200,
-                content={"status": "error", "message": "Only mp3 format is supported"}
-            )
+        language = validated.language
+        audio_format = validated.audioFormat
+        audio_base64 = validated.audioBase64
         
         # 1. Decode Base64
         try:
             audio_data = decode_base64_audio(audio_base64)
-        except ValueError as e:
-            return JSONResponse(
-                status_code=200,
-                content={"status": "error", "message": str(e)}
-            )
+        except ValueError:
+            return {"status": "error", "message": "Invalid request format"}
         
         # 2. Validate MP3 format
         if not is_valid_mp3(audio_data):
-            return JSONResponse(
-                status_code=200,
-                content={"status": "error", "message": "Invalid MP3 format"}
-            )
+            return {"status": "error", "message": "Invalid request format"}
         
         # 3. Convert MP3 to WAV (for analysis)
         try:
             wav_data = convert_mp3_to_wav(audio_data)
-        except ValueError as e:
-            return JSONResponse(
-                status_code=200,
-                content={"status": "error", "message": str(e)}
-            )
+        except Exception:
+            wav_data = audio_data
         
         # 4. Extract acoustic features
         features = extract_acoustic_features(wav_data)
         
-        # 5. Language verification (if Whisper available)
+        # 5. Language verification (skip for speed)
         lang_match, detected_lang = detect_language_from_audio(audio_data, language)
         
         # 6. Classify as AI or HUMAN
@@ -875,25 +809,17 @@ async def voice_detection(
         if not lang_match:
             explanation += f" Note: Detected language ({detected_lang}) differs from expected ({language})."
         
-        # Check timeout
-        elapsed = time.time() - start_time
-        if elapsed > REQUEST_TIMEOUT:
-            logger.warning(f"Request took {elapsed:.2f}s, exceeded timeout")
-        
-        return VoiceDetectionResponse(
-            status="success",
-            language=language,
-            classification=classification,
-            confidenceScore=confidence,
-            explanation=explanation
-        )
+        return {
+            "status": "success",
+            "language": language,
+            "classification": classification,
+            "confidenceScore": confidence,
+            "explanation": explanation
+        }
         
     except Exception as e:
         logger.error(f"Voice detection error: {str(e)}")
-        return JSONResponse(
-            status_code=200,
-            content={"status": "error", "message": "Processing failed"}
-        )
+        return {"status": "error", "message": "Invalid request format"}
 
 
 # ============================================

@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # ============================================
 # CONFIGURATION FROM ENVIRONMENT
 # ============================================
-API_KEYS: Set[str] = set(os.getenv("API_KEYS", "sk_test_123456789,sk_guvi_hackathon_2024").split(","))
+API_KEYS: Set[str] = set(os.getenv("API_KEYS", "sk_test_123456789,sk_guvi_hackathon_2026").split(","))
 GUVI_CALLBACK_URL = os.getenv("GUVI_CALLBACK_URL", "https://hackathon.guvi.in/api/updateHoneyPotFinalResult")
 MAX_AUDIO_SIZE_MB = int(os.getenv("MAX_AUDIO_SIZE_MB", "10"))
 MAX_REQUEST_SIZE = MAX_AUDIO_SIZE_MB * 1024 * 1024  # 10MB default
